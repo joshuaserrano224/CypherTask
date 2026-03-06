@@ -5,8 +5,6 @@ import '../viewmodels/auth_viewmodel.dart';
 import '../utils/validators.dart';
 import 'widgets/cyber_widgets.dart';
 
-
-
 class RegisterView extends StatefulWidget {
   const RegisterView({super.key});
   @override
@@ -18,21 +16,25 @@ class _RegisterViewState extends State<RegisterView> {
   static const Color pinkAccent = Color(0xFFFF00FF);
   static const Color darkBg = Color(0xFF020408);
 
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+  // Use the controllers from the ViewModel to maintain state during OTP process
+  late TextEditingController _nameController;
+  late TextEditingController _emailController;
+  late TextEditingController _passwordController;
   bool _obscurePassword = true;
 
   @override
-  void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    final authVM = Provider.of<AuthViewModel>(context, listen: false);
+    _nameController = authVM.nameController;
+    _emailController = authVM.emailController;
+    _passwordController = authVM.passwordController;
   }
 
   void _handleRegister() async {
     final authVM = Provider.of<AuthViewModel>(context, listen: false);
+    
+    // 1. Run local validation
     final nameErr = Validators.validateName(_nameController.text);
     final emailErr = Validators.validateEmail(_emailController.text);
     final passErr = Validators.validatePassword(_passwordController.text);
@@ -42,23 +44,16 @@ class _RegisterViewState extends State<RegisterView> {
       return;
     }
 
-    // This triggers the OTP process
-    bool started = await authVM.register(
-      context, 
-      _nameController.text, 
-      _emailController.text, 
-      _passwordController.text
-    );
-
-    if (started) {
-      // We don't show "Access Granted" here anymore!
-      // The ViewModel will show "Security Code sent to [email]" automatically.
-    } else {
-      _showSnackBar(authVM.errorMessage ?? "Registration Failed", isError: true);
-    }
+    // 2. Trigger Registration & OTP Transmission
+    // This now communicates with the SQLCipher + OTP logic in the VM
+    await authVM.handleRegister(context);
+    
+    // Note: The OTP Modal is triggered automatically by the listener in LoginView.
+    // If registration starts successfully, the modal will appear.
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: GoogleFonts.spaceGrotesk(color: Colors.white)),
@@ -86,7 +81,7 @@ class _RegisterViewState extends State<RegisterView> {
                   _buildHexagonLogo(),
                   const SizedBox(height: 30),
                   _buildMainTitle(),
-                  const SizedBox(height: 50), // Matched Login spacing
+                  const SizedBox(height: 50),
                   _buildLabelRow("FULL NAME", ""),
                   CyberInput(
                     controller: _nameController,
@@ -94,7 +89,7 @@ class _RegisterViewState extends State<RegisterView> {
                     icon: Icons.badge_outlined,
                     accent: cyanPrimary,
                   ),
-                  const SizedBox(height: 25), // Matched Login spacing
+                  const SizedBox(height: 25),
                   _buildLabelRow("EMAIL ADDRESS", ""),
                   CyberInput(
                     controller: _emailController,
@@ -102,7 +97,7 @@ class _RegisterViewState extends State<RegisterView> {
                     icon: Icons.email_outlined,
                     accent: cyanPrimary,
                   ),
-                  const SizedBox(height: 25), // Matched Login spacing
+                  const SizedBox(height: 25),
                   _buildLabelRow("CREATE PASSWORD", ""),
                   CyberInput(
                     controller: _passwordController,
@@ -111,15 +106,18 @@ class _RegisterViewState extends State<RegisterView> {
                     accent: pinkAccent,
                     isPassword: _obscurePassword,
                     suffixIcon: IconButton(
-                      icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: Colors.white24, size: 20),
+                      icon: Icon(
+                        _obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined, 
+                        color: Colors.white24, size: 20
+                      ),
                       onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
                   const SizedBox(height: 40),
                   isLoading 
                     ? const CircularProgressIndicator(color: cyanPrimary)
-                    : _buildPrimaryButton("CREATE ACCOUNT", Icons.person_add_alt_1_outlined, onTap: _handleRegister),
-                  const SizedBox(height: 50), // Matched Login footer spacing
+                    : _buildPrimaryButton("INITIALIZE IDENTITY", Icons.person_add_alt_1_outlined, onTap: _handleRegister),
+                  const SizedBox(height: 50),
                   _buildFooter(context),
                 ],
               ),
@@ -130,17 +128,16 @@ class _RegisterViewState extends State<RegisterView> {
     );
   }
 
-  // Pixel-Perfect Copy of Login Shield Icon
+  // UI Helper methods to maintain consistent branding
   Widget _buildHexagonLogo() => Container(
-    padding: const EdgeInsets.all(20), // Matched Login
+    padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(
       color: Colors.black, 
       border: Border.all(color: cyanPrimary.withOpacity(0.5), width: 2)
     ),
-    child: const Icon(Icons.shield_outlined, color: cyanPrimary, size: 30), // Matched Login
+    child: const Icon(Icons.shield_outlined, color: cyanPrimary, size: 30),
   );
 
-  // Pixel-Perfect Copy of Login Title Styling
   Widget _buildMainTitle() => Column(
     children: [
       RichText(
@@ -153,7 +150,7 @@ class _RegisterViewState extends State<RegisterView> {
         ),
       ),
       const SizedBox(height: 6),
-      Text("CREATE NEW IDENTITY", style: GoogleFonts.spaceGrotesk(color: cyanPrimary, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 3)),
+      Text("CREATE ENCRYPTED ACCOUNT", style: GoogleFonts.spaceGrotesk(color: cyanPrimary, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 3)),
     ],
   );
 
@@ -168,13 +165,12 @@ class _RegisterViewState extends State<RegisterView> {
     ),
   );
 
-  // Pixel-Perfect Copy of Login Primary Button (With the cyber cuts)
   Widget _buildPrimaryButton(String text, IconData icon, {required VoidCallback onTap}) => Container(
     height: 60, width: double.infinity,
     decoration: BoxDecoration(
       color: cyanPrimary.withOpacity(0.1), 
       border: Border.all(color: cyanPrimary.withOpacity(0.5)),
-      borderRadius: const BorderRadius.only(topRight: Radius.circular(15), bottomLeft: Radius.circular(15)) // The cyber cut
+      borderRadius: const BorderRadius.only(topRight: Radius.circular(15), bottomLeft: Radius.circular(15))
     ),
     child: InkWell(
       onTap: onTap,
@@ -195,12 +191,10 @@ class _RegisterViewState extends State<RegisterView> {
       text: TextSpan(
         style: GoogleFonts.spaceGrotesk(fontSize: 11, color: Colors.white24, letterSpacing: 0.5),
         children: const [
-          TextSpan(text: "Already have an account?  "),
+          TextSpan(text: "Already a registered agent?  "),
           TextSpan(text: "LOG IN", style: TextStyle(color: pinkAccent, fontWeight: FontWeight.bold)),
         ],
       ),
     ),
   );
 }
-
-//By Reogie Mabawad, design

@@ -46,3 +46,5 @@ app.*.map.json
 
 # Security: Ignore environment variables
 .env
+
+android/app/google-services.json

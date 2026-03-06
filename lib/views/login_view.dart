@@ -5,8 +5,6 @@ import '../viewmodels/auth_viewmodel.dart';
 import 'register_view.dart';
 import 'widgets/cyber_widgets.dart';
 
-
-
 class LoginView extends StatefulWidget {
   const LoginView({super.key});
 
@@ -24,118 +22,102 @@ class _LoginViewState extends State<LoginView> {
   @override
   void initState() {
     super.initState();
+    // Add listener to trigger the OTP modal when the VM says we are waiting
     final authVM = Provider.of<AuthViewModel>(context, listen: false);
     authVM.addListener(_handleOTPState);
   }
 
   void _handleOTPState() {
-  // CRITICAL: If the user logged out or moved to Profile, 
-  // this widget is unmounted. Stop the logic here.
-  if (!mounted) return; 
-
-  final authVM = Provider.of<AuthViewModel>(context, listen: false);
-  
-  if (authVM.isWaitingForOTP && !_isModalOpen) {
-    _isModalOpen = true;
-    _showOTPModal(context, authVM);
-  } 
-  else if (!authVM.isWaitingForOTP) {
-    _isModalOpen = false;
+    if (!mounted) return; 
+    final authVM = Provider.of<AuthViewModel>(context, listen: false);
+    
+    if (authVM.isWaitingForOTP && !_isModalOpen) {
+      _isModalOpen = true;
+      _showOTPModal(context, authVM);
+    } 
+    else if (!authVM.isWaitingForOTP) {
+      _isModalOpen = false;
+    }
   }
-}
 
- @override
+  @override
   void dispose() {
-    // 2. DISCONNECT THE LISTENER: Stops the VM from talking to a dead view
     final authVM = Provider.of<AuthViewModel>(context, listen: false);
     authVM.removeListener(_handleOTPState);
     super.dispose();
   }
 
-  
   void _showOTPModal(BuildContext context, AuthViewModel authVM) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    isDismissible: false,
-    enableDrag: false,
-    builder: (context) => Container(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom + 30,
-        left: 30, right: 30, top: 30,
-      ),
-      decoration: const BoxDecoration(
-        color: darkBg,
-        border: Border(top: BorderSide(color: cyanPrimary, width: 2)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildLabelRow("SECURITY CLEARANCE", "ONE-TIME VERIFICATION"),
-          const SizedBox(height: 10),
-          CyberInput(
-            controller: authVM.otpController,
-            hint: "X - X - X - X - X - X",
-            icon: Icons.security,
-            accent: pinkAccent,
-          ),
-          const SizedBox(height: 20),
-          Consumer<AuthViewModel>(
-            builder: (context, vm, _) => Text(
-              vm.canResend 
-                  ? "RESEND CODE AVAILABLE" 
-                  : "RESEND IN ${vm.resendCountdown}s",
-              style: GoogleFonts.spaceGrotesk(
-                color: vm.canResend ? cyanPrimary : Colors.white24,
-                fontSize: 10, fontWeight: FontWeight.bold,
-              ),
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => Container(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom + 30,
+          left: 30, right: 30, top: 30,
+        ),
+        decoration: const BoxDecoration(
+          color: darkBg,
+          border: Border(top: BorderSide(color: cyanPrimary, width: 2)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildLabelRow("SECURITY CLEARANCE", "ONE-TIME VERIFICATION"),
+            const SizedBox(height: 10),
+            CyberInput(
+              controller: authVM.otpController,
+              hint: "X - X - X - X - X - X",
+              icon: Icons.security,
+              accent: pinkAccent,
             ),
-          ),
-          const SizedBox(height: 30),
-          // Using a Consumer here ensures the button specifically updates its UI 
-          // when AuthViewModel calls notifyListeners()
-          Consumer<AuthViewModel>(
-            builder: (context, vm, _) {
-              return vm.isLoading 
-                ? const CircularProgressIndicator(color: pinkAccent)
-                : Row(
-                    children: [
-                      Expanded(
-                        child: _buildSecondaryButton(
-                          "ABORT", 
-                          icon: Icons.close, 
-                          color: Colors.redAccent, 
-                          onTap: () {
-                            vm.cancelOTP(context);
-                            Navigator.pop(context);
-                          }
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Material( // CRITICAL: Gives the InkWell a surface to click on
-                          color: Colors.transparent,
-                          child: _buildPrimaryButton(
-                            "CONFIRM", 
-                            Icons.vpn_key_outlined, 
+            const SizedBox(height: 30),
+            Consumer<AuthViewModel>(
+              builder: (context, vm, _) {
+                return vm.isLoading 
+                  ? const CircularProgressIndicator(color: pinkAccent)
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: _buildSecondaryButton(
+                            "ABORT", 
+                            icon: Icons.close, 
+                            color: Colors.redAccent, 
                             onTap: () {
-                              // DISMISS KEYBOARD: Prevents the keyboard from eating the tap event
-                              FocusManager.instance.primaryFocus?.unfocus();
-                              vm.verifyOTPAndAccess(context);
-                            }, 
+                              vm.cancelOTP();
+                              Navigator.pop(context);
+                            }
                           ),
                         ),
-                      ),
-                    ],
-                  );
-            },
-          ),
-        ],
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Material(
+                            color: Colors.transparent,
+                            child: _buildPrimaryButton(
+                              "CONFIRM", 
+                              Icons.vpn_key_outlined, 
+                              onTap: () async {
+                                FocusManager.instance.primaryFocus?.unfocus();
+                                await vm.verifyOTPAndRegister(context);
+                                if (!vm.isWaitingForOTP && context.mounted) {
+                                  Navigator.pop(context); // Close modal on success
+                                }
+                              }, 
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+              },
+            ),
+          ],
+        ),
       ),
-    ),
-  ).then((_) => _isModalOpen = false);
-}
+    ).then((_) => _isModalOpen = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -156,18 +138,18 @@ class _LoginViewState extends State<LoginView> {
                   const SizedBox(height: 30),
                   _buildMainTitle(),
                   const SizedBox(height: 50),
-                  _buildLabelRow("EMAIL", ""),
+                  _buildLabelRow("IDENTITY EMAIL", ""),
                   CyberInput(
                     controller: authVM.emailController,
-                    hint: "Enter your email",
+                    hint: "Enter registered email",
                     icon: Icons.person_outline,
                     accent: cyanPrimary,
                   ),
                   const SizedBox(height: 25),
-                  _buildLabelRow("PASSWORD", "", isAction: true),
+                  _buildLabelRow("ACCESS KEY", "", isAction: true),
                   CyberInput(
                     controller: authVM.passwordController,
-                    hint: "Enter your password",
+                    hint: "Enter secure password",
                     icon: Icons.lock_outline,
                     accent: pinkAccent,
                     isPassword: authVM.obscurePassword,
@@ -182,33 +164,24 @@ class _LoginViewState extends State<LoginView> {
                   const SizedBox(height: 40),
                   authVM.isLoading 
                     ? const CircularProgressIndicator(color: cyanPrimary)
-                    : _buildPrimaryButton("LOGIN", Icons.arrow_forward_ios_rounded, 
+                    : _buildPrimaryButton("ACCESS VAULT", Icons.arrow_forward_ios_rounded, 
                         onTap: () => authVM.handleLogin(context)),
                   const SizedBox(height: 20),
                   
-                  // --- FIXED BUTTON ROW ---
+                  // --- MODIFIED BUTTON ROW (LOCAL ONLY) ---
                   Row(
                     children: [
-                      // Google Button
                       Expanded(
                         child: _buildSecondaryButton(
-                          "GOOGLE", 
-                          icon: Icons.g_mobiledata, 
-                          onTap: () => authVM.handleGoogleLogin(context)
+                          "FORGOT", 
+                          icon: Icons.help_outline, 
+                          onTap: () {
+                            // Local logic: usually points to contact admin or reset flow
+                          }
                         )
                       ),
-                      const SizedBox(width: 10), // Gap to differentiate
-                      // Facebook Button
-                      Expanded(
-                        child: _buildSecondaryButton(
-                          "FACEBOOK", 
-                          icon: Icons.facebook, 
-                          color: const Color(0xFF1877F2),
-                          onTap: () => authVM.handleFacebookLogin(context)
-                        )
-                      ),
-                      const SizedBox(width: 10), // Gap to differentiate
-                      // Biometric Button
+                      const SizedBox(width: 10),
+                      // Biometric Button (Essential for Hardware Rubric)
                       _buildBiometricButton(() => authVM.handleBiometricLogin(context)),
                     ],
                   ),
@@ -224,7 +197,7 @@ class _LoginViewState extends State<LoginView> {
     );
   }
 
-  // --- HELPER METHODS ---
+  // --- DESIGN COMPONENTS ---
   Widget _buildHexagonLogo() => Container(
     padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(color: Colors.black, border: Border.all(color: cyanPrimary.withOpacity(0.5), width: 2)),
@@ -243,7 +216,7 @@ class _LoginViewState extends State<LoginView> {
         ),
       ),
       const SizedBox(height: 6),
-      Text("AUTHENTICATION REQUIRED", style: GoogleFonts.spaceGrotesk(color: cyanPrimary, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 3)),
+      Text("ENCRYPTED LOCAL STORAGE", style: GoogleFonts.spaceGrotesk(color: cyanPrimary, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 3)),
     ],
   );
 
@@ -263,7 +236,7 @@ class _LoginViewState extends State<LoginView> {
     decoration: BoxDecoration(
       color: cyanPrimary.withOpacity(0.1), 
       border: Border.all(color: cyanPrimary.withOpacity(0.5)),
-      borderRadius: const BorderRadius.only(topRight: Radius.circular(15), bottomLeft: Radius.circular(15)) // Subtle cyber cut
+      borderRadius: const BorderRadius.only(topRight: Radius.circular(15), bottomLeft: Radius.circular(15))
     ),
     child: InkWell(
       onTap: onTap,
@@ -283,7 +256,7 @@ class _LoginViewState extends State<LoginView> {
     decoration: BoxDecoration(
       color: Colors.white.withOpacity(0.03), 
       border: Border.all(color: Colors.white10),
-      borderRadius: BorderRadius.circular(4), // Slightly rounded to break the "stuck" look
+      borderRadius: BorderRadius.circular(4),
     ),
     child: InkWell(
       onTap: onTap,
@@ -314,12 +287,10 @@ class _LoginViewState extends State<LoginView> {
       text: TextSpan(
         style: GoogleFonts.spaceGrotesk(fontSize: 11, color: Colors.white24, letterSpacing: 0.5),
         children: const [
-          TextSpan(text: "Don't have an account?  "),
-          TextSpan(text: "SIGN UP", style: TextStyle(color: pinkAccent, fontWeight: FontWeight.bold)),
+          TextSpan(text: "New operative?  "),
+          TextSpan(text: "REGISTER IDENTITY", style: TextStyle(color: pinkAccent, fontWeight: FontWeight.bold)),
         ],
       ),
     ),
   );
 }
-
-//By Reogie Mabawad, design

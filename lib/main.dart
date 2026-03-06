@@ -1,63 +1,75 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart'; // 1. Add this import
+import 'package:flutter_windowmanager_plus/flutter_windowmanager_plus.dart';
+
 import 'viewmodels/auth_viewmodel.dart';
-import 'viewmodels/profile_viewmodel.dart';
+import 'viewmodels/todo_viewmodel.dart';
+import 'services/session_service.dart';
 import 'views/login_view.dart';
-import 'views/register_view.dart';
-import 'views/profile_view.dart';
+import 'views/todo_list_view.dart';
 
 void main() async {
+  // Ensures Flutter binding is ready before executing platform-specific code
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 2. Load the .env file before anything else
-  try {
-    await dotenv.load(fileName: ".env");
-  } catch (e) {
-    debugPrint("Warning: .env file not found. Ensure it exists in the root folder.");
-  }
-
-  try {
-    await Firebase.initializeApp();
-  } catch (e) {
-    debugPrint("Firebase Init Error: $e");
-  }
-
+  
+  // SECURE PROTOCOL: Prevents screenshots and hides app content in the 
+  // recent apps/multitasking view. Essential for a Secure Vault.
+  await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
+  
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthViewModel()),
-        ChangeNotifierProvider(create: (_) => ProfileViewModel()),
+        ChangeNotifierProvider(create: (_) => TodoViewModel()),
       ],
-      child: const MyApp(),
+      child: const CipherTaskApp(),
     ),
   );
 }
 
+class CipherTaskApp extends StatefulWidget {
+  const CipherTaskApp({super.key});
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  @override
+  State<CipherTaskApp> createState() => _CipherTaskAppState();
+}
+
+class _CipherTaskAppState extends State<CipherTaskApp> {
+  late SessionService _sessionService; 
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize session timeout logic
+    _sessionService = SessionService(onTimeout: () {
+      _navigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (route) => false);
+    });
+    _sessionService.startTimer();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Secure Vault',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF020408),
-        primaryColor: const Color(0xFF0DA6F2),
+    return Listener(
+      // Resets the session timer on any user interaction
+      onPointerDown: (_) => _sessionService.resetTimer(),
+      child: MaterialApp(
+        navigatorKey: _navigatorKey,
+        title: 'Secure Vault',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          fontFamily: 'Poppins',
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF0DA6F2),
+          ),
+        ),
+        initialRoute: '/login',
+        routes: {
+          '/login': (context) => const LoginView(),
+          '/todos': (context) => TodoListView(), 
+        },
       ),
-      // 1. Remove the 'home:' property entirely
-      // 2. Add these two properties:
-      initialRoute: '/login', 
-      routes: {
-        '/login': (context) => const LoginView(),
-        // Only add these below once the files actually exist!
-        '/register': (context) => const RegisterView(),
-         '/profile': (context) => const ProfileView(),
-      },
     );
   }
 }
