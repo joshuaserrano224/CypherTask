@@ -1,16 +1,11 @@
-# secure_vault
+CipherTask - Secure Encrypted To-Do System
 
-A new Flutter project.
+A Flutter application implementing AES-256 encryption, SQLCipher, and biometric authentication.
 
-## Getting Started
+👥 Team Members & RolesJoshua (Lead) -
+Joshua Serrano: Lead Architect & DB Engineer
+Marl Laurence Soriano - M2: Security & Cryptography Lead
+Reogie Mabawad - M3: Auth & Biometrics Specialist
+Jeslito Geverola - M4: Backend & Network (SSL)
+Vera Bianca Dominguez - M5: UI/UX & Integration
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
