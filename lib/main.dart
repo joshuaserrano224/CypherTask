@@ -1,75 +1,87 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_windowmanager_plus/flutter_windowmanager_plus.dart';
-
+import 'package:flutter_dotenv/flutter_dotenv.dart'; 
 import 'viewmodels/auth_viewmodel.dart';
-import 'viewmodels/todo_viewmodel.dart';
-import 'services/session_service.dart';
+import 'viewmodels/todo_viewmodel.dart'; 
 import 'views/login_view.dart';
-import 'views/todo_list_view.dart';
+import 'views/register_view.dart';
+import 'views/todo_list_view.dart'; 
 
 void main() async {
-  // Ensures Flutter binding is ready before executing platform-specific code
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // SECURE PROTOCOL: Prevents screenshots and hides app content in the 
-  // recent apps/multitasking view. Essential for a Secure Vault.
-  await FlutterWindowManagerPlus.addFlags(FlutterWindowManagerPlus.FLAG_SECURE);
-  
+
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    debugPrint("Warning: .env file not found.");
+  }
+
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    debugPrint("Firebase Init Error: $e");
+  }
+
   runApp(
     MultiProvider(
       providers: [
+        // AuthViewModel stays global to manage the login state
         ChangeNotifierProvider(create: (_) => AuthViewModel()),
-        ChangeNotifierProvider(create: (_) => TodoViewModel()),
+        
+        // REMOVED: TodoViewModel is no longer here. 
+        // We will create it ONLY when a user successfully logs in.
       ],
-      child: const CipherTaskApp(),
+      child: const MyApp(),
     ),
   );
 }
 
-class CipherTaskApp extends StatefulWidget {
-  const CipherTaskApp({super.key});
-
-  @override
-  State<CipherTaskApp> createState() => _CipherTaskAppState();
-}
-
-class _CipherTaskAppState extends State<CipherTaskApp> {
-  late SessionService _sessionService; 
-  final _navigatorKey = GlobalKey<NavigatorState>();
-
-  @override
-  void initState() {
-    super.initState();
-    // Initialize session timeout logic
-    _sessionService = SessionService(onTimeout: () {
-      _navigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (route) => false);
-    });
-    _sessionService.startTimer();
-  }
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Listener(
-      // Resets the session timer on any user interaction
-      onPointerDown: (_) => _sessionService.resetTimer(),
-      child: MaterialApp(
-        navigatorKey: _navigatorKey,
-        title: 'Secure Vault',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          fontFamily: 'Poppins',
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF0DA6F2),
+    return Consumer<AuthViewModel>(
+      builder: (context, authVM, child) {
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => authVM.resetSessionTimer(context),
+          child: MaterialApp(
+            title: 'CipherTask Vault',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              brightness: Brightness.dark,
+              scaffoldBackgroundColor: const Color(0xFF07090C),
+              primaryColor: const Color(0xFF0DA6F2),
+              fontFamily: 'Inter', 
+            ),
+            initialRoute: '/login', 
+            // UPDATED ROUTES: Using OnGenerateRoute to inject the ViewModel dynamically
+            onGenerateRoute: (settings) {
+              if (settings.name == '/profile' || settings.name == '/todo_list') {
+                return MaterialPageRoute(
+                  builder: (context) => ChangeNotifierProvider(
+                    // This creates a FRESH, EMPTY ViewModel every time the route is accessed
+                    create: (_) => TodoViewModel(), 
+                    child: const TodoListView(),
+                  ),
+                );
+              }
+              
+              // Standard Routes
+              if (settings.name == '/login') {
+                return MaterialPageRoute(builder: (_) => const LoginView());
+              }
+              if (settings.name == '/register') {
+                return MaterialPageRoute(builder: (_) => const RegisterView());
+              }
+
+              return null;
+            },
           ),
-        ),
-        initialRoute: '/login',
-        routes: {
-          '/login': (context) => const LoginView(),
-          '/todos': (context) => TodoListView(), 
-        },
-      ),
+        );
+      },
     );
   }
 }

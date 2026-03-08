@@ -12,7 +12,7 @@
 
     <application
 
-        android:label="secure_vault"
+        android:label="CypherTask"
 
         android:name="${applicationName}"
 

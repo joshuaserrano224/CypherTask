@@ -22,4 +22,8 @@ class AppConstants {
   static const int darkBg = 0xFF020408;
 }
 
+
+class SecurityKeys {
+  static const String biometricToggle = 'SECURE_BIO_ENFORCEMENT_v1';
+}
 //Vera Bianca Dominguez

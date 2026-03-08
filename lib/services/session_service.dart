@@ -3,29 +3,16 @@ import 'package:flutter/material.dart';
 
 class SessionService {
   Timer? _timer;
-  
-  // This callback is triggered when the 2 minutes are up
-  final VoidCallback onTimeout;
+  final Duration timeout = const Duration(minutes: 2);
 
-  SessionService({required this.onTimeout});
-
-  /// Starts or restarts the inactivity countdown.
-  void startTimer() {
+  void startTimer(VoidCallback onTimeout) {
     _timer?.cancel();
-    _timer = Timer(const Duration(minutes: 2), () {
-      debugPrint("SESSION EXPIRED: Auto-locking system...");
-      onTimeout();
-    });
+    _timer = Timer(timeout, onTimeout);
   }
 
-  /// Reset the timer. This should be called on every user interaction.
-  void resetTimer() {
-    // Only reset if a timer is already active (prevents logic loops)
-    startTimer();
+  void resetTimer(VoidCallback onTimeout) {
+    startTimer(onTimeout);
   }
 
-  /// Stop the timer entirely (useful during logout).
-  void stopTimer() {
-    _timer?.cancel();
-  }
+  void stopTimer() => _timer?.cancel();
 }

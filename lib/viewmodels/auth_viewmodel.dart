@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:async';
 import '../models/user_model.dart';
-import '../services/database_service.dart';
-import '../services/storage_service.dart';
-import '../services/biometric_service.dart';
+import '../services/database_service.dart'; // Consolidated service
 import '../views/todo_list_view.dart';
+import '../utils/constants.dart'; 
 
 class AuthViewModel extends ChangeNotifier {
-  final DatabaseService _dbService = DatabaseService();
-  final StorageService _storageService = StorageService();
-  final BiometricService _biometricService = BiometricService();
+  // Using the consolidated DatabaseService for everything
+  final DatabaseService _dbService = DatabaseService(); 
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   UserModel? _currentUser;
@@ -19,31 +22,187 @@ class AuthViewModel extends ChangeNotifier {
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
-  // --- OTP STATE ---
+  String? _errorMessage;
+  String? get errorMessage => _errorMessage;
+
+  Timer? _sessionTimer;
+
+  void resetSessionTimer(BuildContext context) {
+    _sessionTimer?.cancel();
+    _sessionTimer = Timer(const Duration(minutes: 2), () {
+      logout();
+      if (context.mounted) {
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+      }
+    });
+  }
+
+  Future<void> logout() async {
+    _sessionTimer?.cancel();
+    // Using the new consolidated signOut which handles Firebase, Google, Facebook, and Vault
+    await _dbService.signOut(); 
+    
+    clearAuthInputs(); 
+    
+    _currentUser = null;
+    notifyListeners();
+  }
+
+  void clearAuthInputs() {
+    emailController.clear();
+    passwordController.clear();
+    otpController.clear();
+    obscurePassword = true; 
+    notifyListeners();
+  }
+
   final TextEditingController otpController = TextEditingController();
   String? _generatedOTP;
   bool _isWaitingForOTP = false;
   bool get isWaitingForOTP => _isWaitingForOTP;
-  
-  String? _tempName;
-  String? _tempEmail;
-  String? _tempPassword;
 
-  // --- UI CONTROLLERS ---
+  int _resendCountdown = 30;
+  int get resendCountdown => _resendCountdown;
+  bool get canResend => _resendCountdown == 0;
+  Timer? _resendTimer;
+
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-  final TextEditingController nameController = TextEditingController();
   bool obscurePassword = true;
+
+  String? _tempName;
+  String? _tempProvider;
 
   void togglePasswordVisibility() {
     obscurePassword = !obscurePassword;
     notifyListeners();
   }
 
-  // --- STEP 1: REGISTRATION & OTP TRIGGER ---
-  Future<void> handleRegister(BuildContext context) async {
-    if (emailController.text.isEmpty || passwordController.text.isEmpty || nameController.text.isEmpty) {
-      _showSnackBar(context, "All fields are required.", isError: true);
+  Future<void> handleLogin(BuildContext context) async {
+    if (emailController.text.trim().isEmpty || passwordController.text.trim().isEmpty) {
+      _showSnackBar(context, "DATA MISSING", isError: true);
+      return;
+    }
+
+    bool success = await login(emailController.text.trim(), passwordController.text.trim());
+    
+    if (success) {
+      _showSnackBar(context, "Identity Verified. Welcome Agent.");
+      
+      if (context.mounted) {
+        clearAuthInputs(); 
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const TodoListView()));
+      }
+    } else {
+      _showSnackBar(context, _errorMessage ?? "Access Denied", isError: true);
+    }
+  }
+  
+  Future<bool> login(String email, String password) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // Switched to _dbService
+      User? firebaseUser = await _dbService.loginWithEmail(email, password);
+      
+      if (firebaseUser != null) {
+        await _secureStorage.write(key: "session_email", value: email);
+        await _secureStorage.write(key: "session_password", value: password);
+
+        await _dbService.openUserVault(firebaseUser.uid);
+        DocumentSnapshot userDoc = await _db.collection('users').doc(firebaseUser.uid).get();
+
+        _currentUser = UserModel(
+          id: firebaseUser.uid, 
+          fullName: userDoc.get('fullName') ?? "Agent", 
+          email: email
+        );
+        
+        return true;
+      }
+      return false;
+    } catch (e) {
+      _errorMessage = "AUTH_PROTOCOL_ERROR: Check credentials.";
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> handleBiometricLogin(BuildContext context) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // Switched to _dbService
+      String deviceId = await _dbService.getDeviceId();
+      DocumentSnapshot registryDoc = await _db.collection('biometric_registry').doc(deviceId).get();
+      
+      if (!registryDoc.exists) {
+        throw "This device is not registered for biometric access.";
+      }
+
+      String ownerId = registryDoc.get('userId');
+      String? ownerEmail = await _secureStorage.read(key: "biometric_email");
+      String? ownerPassword = await _secureStorage.read(key: "biometric_password");
+
+      if (ownerEmail == null || ownerPassword == null) {
+        throw "Biometric credentials not found. Please login manually and re-enable it in settings.";
+      }
+
+      // Switched to _dbService
+      String? authError = await _dbService.authenticate();
+      if (authError != null) throw authError;
+
+      UserCredential userCred = await _auth.signInWithEmailAndPassword(
+        email: ownerEmail, 
+        password: ownerPassword
+      );
+
+      if (userCred.user?.uid != ownerId) {
+        await _dbService.signOut();
+        throw "Security Breach: Identity mismatch. Hardware belongs to another user.";
+      }
+
+      await _dbService.openUserVault(ownerId);
+      DocumentSnapshot userDoc = await _db.collection('users').doc(ownerId).get();
+      
+      _currentUser = UserModel(
+        id: ownerId, 
+        fullName: userDoc.get('fullName'), 
+        email: userDoc.get('email')
+      );
+
+      _showSnackBar(context, "Welcome back, ${_currentUser?.fullName}");
+      
+      if (context.mounted) {
+        Navigator.pushAndRemoveUntil(
+          context, 
+          MaterialPageRoute(builder: (context) => const TodoListView()),
+          (route) => false
+        );
+      }
+    } catch (e) {
+      debugPrint("Biometric Login Failed: $e");
+      _showSnackBar(context, e.toString(), isError: true);
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> verifyOTPAndAccess(BuildContext context) async {
+    if (otpController.text.trim().isEmpty) {
+      _showSnackBar(context, "Please enter verification code.", isError: true);
+      return;
+    }
+
+    if (otpController.text.trim() != _generatedOTP) {
+      _showSnackBar(context, "Invalid Code.", isError: true);
       return;
     }
 
@@ -51,143 +210,164 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final hardwareKey = await _storageService.getDatabaseKey();
-      final db = await _dbService.getDatabase(hardwareKey);
+      final user = _auth.currentUser;
+      if (user == null) throw "Session expired. Please restart registration.";
 
-      final existing = await db.query('users', where: 'email = ?', whereArgs: [emailController.text.trim()]);
-      if (existing.isNotEmpty) {
-        _showSnackBar(context, "Identity already registered. Please Login.", isError: true);
-        return;
-      }
+      await _db.collection('users').doc(user.uid).set({
+        'fullName': _tempName ?? "Agent",
+        'email': user.email,
+        'otpVerified': true,
+        'provider': 'email',
+        'biometricEnabled': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
-      _tempName = nameController.text.trim();
-      _tempEmail = emailController.text.trim();
-      _tempPassword = passwordController.text.trim();
+      await _dbService.openUserVault(user.uid);
+      await _dbService.saveLocalUser(user.uid, _tempName ?? "Agent", user.email!);
 
-      // Lab Requirement: MFA Simulation (Bonus Points)
-      _generatedOTP = "123456"; 
-      _isWaitingForOTP = true;
-      _showSnackBar(context, "MFA Protocol: Code 123456 transmitted to $_tempEmail");
+      String? tPass = await _secureStorage.read(key: "temp_password");
+      await _secureStorage.write(key: "session_password", value: tPass); 
+      await _secureStorage.write(key: "session_email", value: user.email);
+
+      await _secureStorage.delete(key: "temp_password"); 
+
+      _currentUser = UserModel(id: user.uid, fullName: _tempName ?? "Agent", email: user.email!);
+      _isWaitingForOTP = false;
       
-    } catch (e) {
-      _showSnackBar(context, "Transmission Failed: $e", isError: true);
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  // --- STEP 2: VERIFY OTP & SAVE TO SQLCIPHER ---
-  Future<void> verifyOTPAndRegister(BuildContext context) async {
-    if (otpController.text.trim() == _generatedOTP) {
-      _isLoading = true;
-      notifyListeners();
-
-      try {
-        final hardwareKey = await _storageService.getDatabaseKey();
-        final db = await _dbService.getDatabase(hardwareKey);
-
-        await db.insert('users', {
-          'fullName': _tempName,
-          'email': _tempEmail,
-          'password': _tempPassword,
-        });
-
-        _isWaitingForOTP = false;
-        _generatedOTP = null;
-        otpController.clear();
-
-        _showSnackBar(context, "Identity Secured. Account Activated.");
-        Navigator.pop(context); 
-      } catch (e) {
-        _showSnackBar(context, "Database Protocol Failure.", isError: true);
-      } finally {
-        _isLoading = false;
-        notifyListeners();
-      }
-    } else {
-      _showSnackBar(context, "Invalid Access Code.", isError: true);
-    }
-  }
-
-  // --- MANUAL LOGIN ---
-  Future<void> handleLogin(BuildContext context) async {
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      final hardwareKey = await _storageService.getDatabaseKey();
-      final db = await _dbService.getDatabase(hardwareKey);
-
-      final List<Map<String, dynamic>> results = await db.query(
-        'users',
-        where: 'email = ? AND password = ?',
-        whereArgs: [emailController.text.trim(), passwordController.text.trim()],
-      );
-
-      if (results.isNotEmpty) {
-        await _secureStorage.write(key: "last_email", value: emailController.text.trim());
-        await _secureStorage.write(key: "last_pass", value: passwordController.text.trim());
-
-        _currentUser = UserModel(
-          id: results.first['id'].toString(),
-          fullName: results.first['fullName'],
-          email: results.first['email'],
+      if (context.mounted) {
+        Navigator.pushAndRemoveUntil(
+          context, 
+          MaterialPageRoute(builder: (context) => const TodoListView()), 
+          (route) => false
         );
-
-        _navigateToDashboard(context);
-      } else {
-        _showSnackBar(context, "Access Denied: Invalid Credentials", isError: true);
       }
     } catch (e) {
-      _showSnackBar(context, "Vault is Locked.", isError: true);
+      _showSnackBar(context, "Protocol Error: ${e.toString()}", isError: true);
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  // --- BIOMETRIC LOGIN ---
-  Future<void> handleBiometricLogin(BuildContext context) async {
+  Future<void> _abortRegistration() async {
     try {
-      // Fix: Ensured the result is handled as a boolean check
-      final bool authenticated = await _biometricService.authenticate();
-      if (!authenticated) return;
-
-      String? email = await _secureStorage.read(key: "last_email");
-      String? pass = await _secureStorage.read(key: "last_pass");
-
-      if (email != null && pass != null) {
-        emailController.text = email;
-        passwordController.text = pass;
-        await handleLogin(context);
-      } else {
-        _showSnackBar(context, "Biometrics not initialized. Login with password first.", isError: true);
+      final user = _auth.currentUser;
+      if (user != null) {
+        await user.delete();
+        debugPrint("REGISTRATION_CLEANUP: Unverified user purged from Firebase.");
       }
     } catch (e) {
-      _showSnackBar(context, "Biometric Failure: $e", isError: true);
+      debugPrint("CLEANUP_ERROR: ${e.toString()}");
     }
   }
 
-  // --- FIX: Added missing cancelOTP method ---
-  void cancelOTP() {
+  void cancelOTP(BuildContext context) {
     _isWaitingForOTP = false;
+    _resendTimer?.cancel();
+    _abortRegistration(); 
+    _tempName = null;
+    _tempProvider = null;
     _generatedOTP = null;
     otpController.clear();
+    _showSnackBar(context, "Registration Cancelled.");
     notifyListeners();
   }
 
-  void _navigateToDashboard(BuildContext context) {
-    emailController.clear();
-    passwordController.clear();
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => TodoListView()));
+  Future<bool> register(BuildContext context, String name, String email, String password) async {
+    if (name.trim().isEmpty || email.trim().isEmpty || password.trim().isEmpty) {
+      _errorMessage = "FIELD_ERROR: All credentials required.";
+      _showSnackBar(context, _errorMessage!, isError: true);
+      return false;
+    }
+
+    bool hasMin8 = password.length >= 8;
+    bool hasUpper = password.contains(RegExp(r'[A-Z]'));
+    bool hasLower = password.contains(RegExp(r'[a-z]'));
+    bool hasNum = password.contains(RegExp(r'[0-9]'));
+    bool hasSpecial = password.contains(RegExp(r'[!@#\$&*~]'));
+
+    if (!hasMin8 || !hasUpper || !hasLower || !hasNum || !hasSpecial) {
+      _errorMessage = "SECURITY_BREACH: Password strength insufficient.";
+      _showSnackBar(context, _errorMessage!, isError: true);
+      return false;
+    }
+
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final existing = await _db.collection('users')
+          .where('email', isEqualTo: email)
+          .where('otpVerified', isEqualTo: true)
+          .get();
+      
+      if (existing.docs.isNotEmpty) {
+        _errorMessage = "IDENTITY_ACTIVE: Identity already registered.";
+        _showSnackBar(context, _errorMessage!, isError: true);
+        return false;
+      }
+
+      // Switched to _dbService
+      User? firebaseUser = await _dbService.registerWithEmail(name, email, password);
+      
+      if (firebaseUser != null) {
+        await _secureStorage.write(key: "temp_password", value: password);
+        bool success = await _triggerOTPProtocol(context, email, firebaseUser.uid, name);
+        return success; 
+      }
+      return false;
+    } catch (e) {
+      debugPrint("REGISTRATION_SYSTEM_ERROR: $e");
+      _errorMessage = "PROTOCOL_FAILURE: Service unreachable.";
+      _showSnackBar(context, _errorMessage!, isError: true);
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> _triggerOTPProtocol(BuildContext context, String email, String uid, String? name, {String provider = 'email'}) async {
+    _isWaitingForOTP = true;
+    _tempName = name;
+    _tempProvider = provider;
+    notifyListeners();
+
+    // Switched to _dbService
+    _generatedOTP = await _dbService.sendEmailOTP(email);
+
+    if (_generatedOTP != null) {
+      _startResendTimer();
+      _showSnackBar(context, "Verification Code Transmitted to $email");
+      return true;
+    } else {
+      await _abortRegistration();
+      _isWaitingForOTP = false;
+      _showSnackBar(context, "TRANSMISSION_ERROR: Check email address.", isError: true);
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void _startResendTimer() {
+    _resendCountdown = 30;
+    _resendTimer?.cancel();
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_resendCountdown > 0) {
+        _resendCountdown--;
+        notifyListeners();
+      } else {
+        timer.cancel();
+      }
+    });
   }
 
   void _showSnackBar(BuildContext context, String message, {bool isError = false}) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(fontFamily: 'Poppins')),
+        content: Text(message, style: GoogleFonts.spaceGrotesk(color: Colors.white)),
         backgroundColor: isError ? Colors.redAccent : const Color(0xFF0DA6F2),
         behavior: SnackBarBehavior.floating,
       ),
@@ -196,9 +376,10 @@ class AuthViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _resendTimer?.cancel();
+    _sessionTimer?.cancel();
     emailController.dispose();
     passwordController.dispose();
-    nameController.dispose();
     otpController.dispose();
     super.dispose();
   }

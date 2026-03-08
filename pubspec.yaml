@@ -48,7 +48,7 @@ dependencies:
   sqflite_sqlcipher: ^3.0.0
   path: ^1.9.0
   encrypt: ^5.0.3   
-  flutter_windowmanager_plus: ^1.0.1   
+  screen_protector: ^1.1.1 
 
   
 

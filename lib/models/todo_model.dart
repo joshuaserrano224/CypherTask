@@ -1,32 +1,39 @@
 class TodoModel {
   final int? id;
   final String title;
-  final String note; // This will hold the plaintext version in memory
+  final String secretNote;
+  final bool isDone;
+  final String createdAt; // Ensure this line exists
+  final String updatedAt; // Ensure this line exists
 
   TodoModel({
     this.id,
     required this.title,
-    required this.note,
+    required this.secretNote,
+    required this.isDone,
+    required this.createdAt, // Ensure this is here
+    required this.updatedAt, // Ensure this is here
   });
 
-  // Convert a Map from the database into a TodoModel
-  // The 'note' here should be the decrypted string from the ViewModel
-  factory TodoModel.fromMap(Map<String, dynamic> map, String decryptedNote) {
+  factory TodoModel.fromMap(Map<String, dynamic> map) {
     return TodoModel(
       id: map['id'],
-      title: map['title'],
-      note: decryptedNote,
+      title: map['title'] ?? '',
+      secretNote: map['secretNote'] ?? '',
+      isDone: map['isDone'] == 1,
+      createdAt: map['createdAt'] ?? '',
+      updatedAt: map['updatedAt'] ?? '',
     );
   }
 
-  // Convert a TodoModel into a Map to store in the database
-  // Note: We don't encrypt here; the ViewModel handles encryption 
-  // before passing the data to the DatabaseService.
-  Map<String, dynamic> toMap(String encryptedNote) {
+  Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
       'title': title,
-      'encrypted_note': encryptedNote,
+      'secretNote': secretNote,
+      'isDone': isDone ? 1 : 0,
+      'createdAt': createdAt,
+      'updatedAt': updatedAt,
     };
   }
 }
